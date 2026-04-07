@@ -11,7 +11,7 @@ pip install -r requirements.txt
 ```
 
 ## Dataset
-The dataset will automatically download on the first run of code. 
+The dataset will automatically download on first run. 
 
 
 ## Usage
