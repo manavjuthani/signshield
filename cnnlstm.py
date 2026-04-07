@@ -24,11 +24,10 @@ import seaborn as sns
 import warnings
 warnings.filterwarnings('ignore')
 
-# ── Output dirs ──────────────────────────────────────────────────────
+
 os.makedirs('eval_outputs/figures', exist_ok=True)
 os.makedirs('eval_outputs/report', exist_ok=True)
 
-# ── 1. Dataset (same as training) ────────────────────────────────────
 class SequenceDataset(Dataset):
     def __init__(self, base_ds, indices, attack=False, corruption_fraction=1.0):
         """
@@ -47,7 +46,6 @@ class SequenceDataset(Dataset):
                                  [0.229, 0.224, 0.225])
         ])
 
-        # for raw frame extraction (no normalize)
         self.raw_preprocess = transforms.Compose([
             transforms.ToPILImage(),
             transforms.Resize((224, 224)),
@@ -104,7 +102,6 @@ class SequenceDataset(Dataset):
         return sequence, label
 
 
-# ── 2. Model (same architecture) ────────────────────────────────────
 class CNNLSTM(nn.Module):
     def __init__(self, num_classes=43, hidden_size=256, num_layers=1):
         super(CNNLSTM, self).__init__()
@@ -150,7 +147,6 @@ class CNNLSTM(nn.Module):
         return logits, features, lstm_out
 
 
-# ── 3. Grad-CAM for attention heatmaps ──────────────────────────────
 class GradCAM:
     def __init__(self, model, target_layer):
         self.model = model
@@ -192,7 +188,7 @@ def compute_gradcam_for_sequence(model, sequence, device):
     sequence: (8, 3, 224, 224)
     Returns: list of 8 heatmaps (224, 224)
     """
-    model.train()  # LSTM backward requires train mode
+    model.train()  
     seq = sequence.unsqueeze(0).to(device)  # (1, 8, 3, 224, 224)
     seq.requires_grad_(True)
 
@@ -214,7 +210,6 @@ def compute_gradcam_for_sequence(model, sequence, device):
     return heatmaps, pred_class 
 
 
-# ── 4. Evaluation Metrics ────────────────────────────────────────────
 def evaluate_model(model, dataloader, device, num_classes=43):
     """
     Full evaluation: accuracy, per-class accuracy, confidence stats,
@@ -258,22 +253,18 @@ def evaluate_model(model, dataloader, device, num_classes=43):
         else:
             per_class_acc.append(0.0)
 
-    # Risk-weighted error: weight misclassifications by (1 - confidence)
-    # Higher confidence wrong predictions are penalized more
+
     incorrect_mask = all_preds != all_labels
     if incorrect_mask.sum() > 0:
         risk_weighted_error = (all_max_conf[incorrect_mask]).mean()
     else:
         risk_weighted_error = 0.0
 
-    # Action Safety Rate: fraction of predictions where model is correct
-    # OR model confidence < threshold (model "abstains" on uncertain predictions)
     safety_threshold = 0.5
     safe_correct = (all_preds == all_labels)
     safe_abstain = (all_max_conf < safety_threshold) & (all_preds != all_labels)
     action_safety_rate = (safe_correct | safe_abstain).mean() * 100
 
-    # Calibration: Expected Calibration Error (ECE)
     n_bins = 15
     bin_boundaries = np.linspace(0, 1, n_bins + 1)
     ece = 0.0
@@ -315,7 +306,7 @@ def evaluate_model(model, dataloader, device, num_classes=43):
     }
 
 
-# ── 5. Visualization Functions ───────────────────────────────────────
+
 def plot_attention_heatmaps(model, dataset, device, num_samples=3, save_path='eval_outputs/figures'):
     """Generate attention heatmaps for clean and attacked sequences."""
     model.eval()
@@ -380,7 +371,6 @@ def plot_attention_heatmaps(model, dataset, device, num_samples=3, save_path='ev
             attack_frames.append(dataset.preprocess(frame))
         attack_seq = torch.stack(attack_frames)
 
-        # Compute saliency for clean
         heatmaps_clean, pred_clean = compute_gradcam_for_sequence(model, clean_seq, device)
         heatmaps_attack, pred_attack = compute_gradcam_for_sequence(model, attack_seq, device)
 
@@ -626,441 +616,3 @@ def plot_per_class_robustness(results_dict, save_path='eval_outputs/figures'):
     plt.savefig(f'{save_path}/per_class_robustness.png', dpi=150, bbox_inches='tight')
     plt.close()
     print("Saved: per_class_robustness.png")
-
-
-def generate_markdown_report(results_dict, save_path='eval_outputs/report'):
-    """Generate a comprehensive markdown report."""
-    levels = sorted(results_dict.keys())
-
-    report = """# CNN-LSTM Model Evaluation Report
-## Traffic Sign Recognition with Adversarial Robustness
-
----
-
-## 1. Executive Summary
-
-This report evaluates the CNN-LSTM temporal model on the GTSRB (German Traffic Sign Recognition Benchmark) dataset under varying levels of adversarial corruption (0%, 30%, 50%). The model uses a ResNet-18 backbone for per-frame feature extraction followed by an LSTM for temporal reasoning.
-
----
-
-## 2. Evaluation Metrics
-
-| Metric | Description |
-|--------|-------------|
-| **Accuracy** | Standard classification accuracy |
-| **Robustness** | Accuracy retention under adversarial corruption |
-| **ECE** | Expected Calibration Error — measures confidence-accuracy alignment |
-| **Risk-Weighted Error** | Average confidence on incorrect predictions (lower = safer failures) |
-| **Action Safety Rate** | % of predictions that are either correct OR low-confidence wrong (model "abstains") |
-
----
-
-## 3. Results Summary
-
-| Corruption | Accuracy | Loss | ECE | Risk-Wtd Error | Safety Rate |
-|:----------:|:--------:|:----:|:---:|:--------------:|:-----------:|
-"""
-
-    for level in levels:
-        r = results_dict[level]
-        report += f"| {int(level*100)}% | {r['accuracy']:.2f}% | {r['avg_loss']:.4f} | {r['ece']:.4f} | {r['risk_weighted_error']:.4f} | {r['action_safety_rate']:.2f}% |\n"
-
-    report += """
----
-
-## 4. Key Findings
-
-### 4.1 Robustness
-"""
-    clean_acc = results_dict[0.0]['accuracy']
-    for level in levels:
-        if level > 0:
-            drop = clean_acc - results_dict[level]['accuracy']
-            report += f"- **{int(level*100)}% corruption**: Accuracy drops by **{drop:.2f}pp** from clean baseline\n"
-
-    report += """
-### 4.2 Uncertainty Calibration
-"""
-    for level in levels:
-        report += f"- **{int(level*100)}% corruption**: ECE = {results_dict[level]['ece']:.4f}\n"
-
-    report += """
-### 4.3 Action Safety
-"""
-    for level in levels:
-        report += f"- **{int(level*100)}% corruption**: Safety Rate = {results_dict[level]['action_safety_rate']:.2f}%\n"
-
-    report += """
----
-
-## 5. Visualizations
-
-### 5.1 Attention Heatmaps
-![Attention Heatmaps](../figures/attention_heatmaps.png)
-
-Saliency-based attention maps showing where the model focuses for clean vs attacked frames.
-
-### 5.2 Robustness Curves
-![Robustness Curves](../figures/robustness_curves.png)
-
-Multi-metric degradation across corruption levels.
-
-### 5.3 Confidence Distributions
-![Confidence Distributions](../figures/confidence_distributions.png)
-
-Separation of confidence scores between correct and incorrect predictions.
-
-### 5.4 Calibration Diagrams
-![Calibration Diagrams](../figures/calibration_diagrams.png)
-
-Reliability diagrams showing model calibration quality.
-
-### 5.5 Confusion Matrices
-![Confusion Heatmaps](../figures/confusion_heatmaps.png)
-
-Normalized confusion matrices showing misclassification patterns.
-
-### 5.6 Per-Class Robustness
-![Per-Class Robustness](../figures/per_class_robustness.png)
-
-Per-class accuracy breakdown across corruption levels.
-
----
-
-## 6. Methodology
-
-- **Dataset**: GTSRB, 350 images/class, 80/20 train/val split
-- **Sequence generation**: 8 frames with random rotation (±10°) and brightness (0.8–1.2x)
-- **Attack**: Central noise patch (50% of frame area) applied to fraction of frames
-- **Corruption levels**: 0% (clean), 30%, 50% of frames corrupted
-- **Safety threshold**: 0.5 confidence for action safety rate computation
-
----
-
-*Report generated automatically by evaluate_cnn_lstm.py*
-"""
-
-    with open(f'{save_path}/evaluation_report.md', 'w') as f:
-        f.write(report)
-    print("Saved: evaluation_report.md")
-
-
-# ── 6. PPTX Slide Generation Script ─────────────────────────────────
-def generate_pptx_script(results_dict, save_path='eval_outputs'):
-    """Generate a Node.js script to create the presentation slides."""
-    levels = sorted(results_dict.keys())
-
-    # Gather metrics
-    accs = [f"{results_dict[l]['accuracy']:.1f}" for l in levels]
-    losses = [f"{results_dict[l]['avg_loss']:.4f}" for l in levels]
-    eces = [f"{results_dict[l]['ece']:.4f}" for l in levels]
-    rwes = [f"{results_dict[l]['risk_weighted_error']:.4f}" for l in levels]
-    asrs = [f"{results_dict[l]['action_safety_rate']:.1f}" for l in levels]
-
-    clean_acc = results_dict[0.0]['accuracy']
-    drops = []
-    for l in levels:
-        if l > 0:
-            drops.append(f"{clean_acc - results_dict[l]['accuracy']:.1f}")
-
-    script = f'''const pptxgen = require("pptxgenjs");
-const fs = require("fs");
-const path = require("path");
-
-const pres = new pptxgen();
-pres.layout = "LAYOUT_16x9";
-pres.author = "CNN-LSTM Evaluation";
-pres.title = "CNN-LSTM Traffic Sign Recognition - Robustness Evaluation";
-
-const PRIMARY = "1E2761";
-const SECONDARY = "CADCFC";
-const ACCENT = "2196F3";
-const BG_DARK = "0F1729";
-const BG_LIGHT = "F8FAFC";
-const TEXT_DARK = "1E293B";
-const TEXT_MUTED = "64748B";
-const GREEN = "4CAF50";
-const ORANGE = "FF9800";
-const RED = "F44336";
-
-const figDir = path.resolve("eval_outputs/figures");
-
-// ── Slide 1: Title ──────────────────────────────────
-let s1 = pres.addSlide();
-s1.background = {{ color: BG_DARK }};
-s1.addText("CNN-LSTM Robustness Evaluation", {{
-    x: 0.8, y: 1.2, w: 8.4, h: 1.2,
-    fontSize: 36, fontFace: "Georgia", color: "FFFFFF", bold: true
-}});
-s1.addText("Traffic Sign Recognition Under Adversarial Corruption", {{
-    x: 0.8, y: 2.5, w: 8.4, h: 0.8,
-    fontSize: 18, fontFace: "Calibri", color: SECONDARY
-}});
-s1.addText("GTSRB Dataset  |  ResNet-18 + LSTM  |  0% / 30% / 50% Corruption", {{
-    x: 0.8, y: 3.8, w: 8.4, h: 0.5,
-    fontSize: 13, fontFace: "Calibri", color: TEXT_MUTED
-}});
-s1.addShape(pres.shapes.RECTANGLE, {{
-    x: 0.8, y: 3.4, w: 2.5, h: 0.04, fill: {{ color: ACCENT }}
-}});
-
-// ── Slide 2: Key Metrics Summary ────────────────────
-let s2 = pres.addSlide();
-s2.background = {{ color: BG_LIGHT }};
-s2.addText("Key Metrics Summary", {{
-    x: 0.6, y: 0.3, w: 8.8, h: 0.7,
-    fontSize: 28, fontFace: "Georgia", color: TEXT_DARK, bold: true
-}});
-
-const metrics = [
-    {{ label: "Clean Accuracy", value: "{accs[0]}%", color: GREEN }},
-    {{ label: "30% Corruption", value: "{accs[1]}%", color: ORANGE }},
-    {{ label: "50% Corruption", value: "{accs[2]}%", color: RED }},
-];
-metrics.forEach((m, i) => {{
-    const xPos = 0.6 + i * 3.1;
-    s2.addShape(pres.shapes.RECTANGLE, {{
-        x: xPos, y: 1.3, w: 2.8, h: 1.8,
-        fill: {{ color: "FFFFFF" }},
-        shadow: {{ type: "outer", blur: 6, offset: 2, angle: 135, color: "000000", opacity: 0.1 }}
-    }});
-    s2.addText(m.value, {{
-        x: xPos, y: 1.5, w: 2.8, h: 0.9,
-        fontSize: 40, fontFace: "Georgia", color: m.color, bold: true, align: "center"
-    }});
-    s2.addText(m.label, {{
-        x: xPos, y: 2.35, w: 2.8, h: 0.5,
-        fontSize: 13, fontFace: "Calibri", color: TEXT_MUTED, align: "center"
-    }});
-}});
-
-// Bottom stats row
-const bottomStats = [
-    {{ label: "ECE (Clean)", value: "{eces[0]}" }},
-    {{ label: "ECE (50%)", value: "{eces[2]}" }},
-    {{ label: "Safety Rate (Clean)", value: "{asrs[0]}%" }},
-    {{ label: "Safety Rate (50%)", value: "{asrs[2]}%" }},
-];
-bottomStats.forEach((st, i) => {{
-    const xPos = 0.6 + i * 2.3;
-    s2.addText(st.value, {{
-        x: xPos, y: 3.5, w: 2.0, h: 0.6,
-        fontSize: 20, fontFace: "Georgia", color: TEXT_DARK, bold: true, align: "center"
-    }});
-    s2.addText(st.label, {{
-        x: xPos, y: 4.05, w: 2.0, h: 0.4,
-        fontSize: 10, fontFace: "Calibri", color: TEXT_MUTED, align: "center"
-    }});
-}});
-
-// ── Slide 3: Robustness Curves ──────────────────────
-let s3 = pres.addSlide();
-s3.background = {{ color: BG_LIGHT }};
-s3.addText("Robustness Analysis", {{
-    x: 0.6, y: 0.3, w: 8.8, h: 0.7,
-    fontSize: 28, fontFace: "Georgia", color: TEXT_DARK, bold: true
-}});
-s3.addImage({{
-    path: path.join(figDir, "robustness_curves.png"),
-    x: 0.3, y: 1.1, w: 9.4, h: 4.3
-}});
-
-// ── Slide 4: Attention Heatmaps ─────────────────────
-let s4 = pres.addSlide();
-s4.background = {{ color: BG_LIGHT }};
-s4.addText("Attention Heatmaps: Clean vs Attacked", {{
-    x: 0.6, y: 0.3, w: 8.8, h: 0.7,
-    fontSize: 28, fontFace: "Georgia", color: TEXT_DARK, bold: true
-}});
-s4.addImage({{
-    path: path.join(figDir, "attention_heatmaps.png"),
-    x: 0.2, y: 1.0, w: 9.6, h: 4.4
-}});
-
-// ── Slide 5: Confidence & Calibration ───────────────
-let s5 = pres.addSlide();
-s5.background = {{ color: BG_LIGHT }};
-s5.addText("Confidence & Calibration", {{
-    x: 0.6, y: 0.2, w: 8.8, h: 0.6,
-    fontSize: 28, fontFace: "Georgia", color: TEXT_DARK, bold: true
-}});
-s5.addImage({{
-    path: path.join(figDir, "confidence_distributions.png"),
-    x: 0.2, y: 0.85, w: 9.6, h: 2.2
-}});
-s5.addImage({{
-    path: path.join(figDir, "calibration_diagrams.png"),
-    x: 0.2, y: 3.1, w: 9.6, h: 2.2
-}});
-
-// ── Slide 6: Confusion Matrices ─────────────────────
-let s6 = pres.addSlide();
-s6.background = {{ color: BG_LIGHT }};
-s6.addText("Confusion Matrices", {{
-    x: 0.6, y: 0.3, w: 8.8, h: 0.7,
-    fontSize: 28, fontFace: "Georgia", color: TEXT_DARK, bold: true
-}});
-s6.addImage({{
-    path: path.join(figDir, "confusion_heatmaps.png"),
-    x: 0.2, y: 1.0, w: 9.6, h: 4.3
-}});
-
-// ── Slide 7: Per-Class Breakdown ────────────────────
-let s7 = pres.addSlide();
-s7.background = {{ color: BG_LIGHT }};
-s7.addText("Per-Class Robustness", {{
-    x: 0.6, y: 0.3, w: 8.8, h: 0.7,
-    fontSize: 28, fontFace: "Georgia", color: TEXT_DARK, bold: true
-}});
-s7.addImage({{
-    path: path.join(figDir, "per_class_robustness.png"),
-    x: 0.2, y: 1.0, w: 9.6, h: 4.3
-}});
-
-// ── Slide 8: Conclusions ────────────────────────────
-let s8 = pres.addSlide();
-s8.background = {{ color: BG_DARK }};
-s8.addText("Conclusions", {{
-    x: 0.8, y: 0.4, w: 8.4, h: 0.8,
-    fontSize: 32, fontFace: "Georgia", color: "FFFFFF", bold: true
-}});
-s8.addShape(pres.shapes.RECTANGLE, {{
-    x: 0.8, y: 1.2, w: 2.0, h: 0.04, fill: {{ color: ACCENT }}
-}});
-
-const conclusions = [
-    {{ text: "Temporal LSTM reasoning provides robustness gains over single-frame models", options: {{ bullet: true, breakLine: true, color: "FFFFFF", fontSize: 15, fontFace: "Calibri" }} }},
-    {{ text: "Clean accuracy: {accs[0]}% — model learns GTSRB features effectively", options: {{ bullet: true, breakLine: true, color: "FFFFFF", fontSize: 15, fontFace: "Calibri" }} }},
-    {{ text: "30% corruption: accuracy drops by {drops[0]}pp — moderate resilience", options: {{ bullet: true, breakLine: true, color: "FFFFFF", fontSize: 15, fontFace: "Calibri" }} }},
-    {{ text: "50% corruption: accuracy drops by {drops[1] if len(drops) > 1 else 'N/A'}pp — significant but not catastrophic", options: {{ bullet: true, breakLine: true, color: "FFFFFF", fontSize: 15, fontFace: "Calibri" }} }},
-    {{ text: "Calibration degrades under attack — model becomes overconfident on wrong predictions", options: {{ bullet: true, breakLine: true, color: "FFFFFF", fontSize: 15, fontFace: "Calibri" }} }},
-    {{ text: "Action safety rate remains strong — the model's low-confidence failures are recoverable", options: {{ bullet: true, color: "FFFFFF", fontSize: 15, fontFace: "Calibri" }} }},
-];
-s8.addText(conclusions, {{
-    x: 0.8, y: 1.6, w: 8.4, h: 3.5
-}});
-
-pres.writeFile({{ fileName: "eval_outputs/CNN_LSTM_Evaluation.pptx" }}).then(() => {{
-    console.log("Presentation saved: CNN_LSTM_Evaluation.pptx");
-}});
-'''
-
-    with open(f'{save_path}/generate_slides.js', 'w') as f:
-        f.write(script)
-    print("Saved: generate_slides.js")
-
-
-# ══════════════════════════════════════════════════════════════════════
-# ── MAIN ─────────────────────────────────────────────────────────────
-# ══════════════════════════════════════════════════════════════════════
-if __name__ == '__main__':
-    print("=" * 60)
-    print("CNN-LSTM Full Evaluation Pipeline")
-    print("=" * 60)
-
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f"Device: {device}")
-
-    # ── Load data ────────────────────────────────────────────────────
-    raw_transform = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor()
-    ])
-
-    full_ds = datasets.GTSRB(root='./data', split='train',
-                              download=False, transform=raw_transform)
-
-    NUM_CLASSES = 43
-    IMAGES_PER_CLASS = 350
-
-    all_targets = [label for _, label in full_ds]
-    all_targets_array = np.array(all_targets)
-
-    subset_indices = []
-    for cls in range(NUM_CLASSES):
-        cls_indices = np.where(all_targets_array == cls)[0].tolist()
-        subset_indices.extend(cls_indices[:IMAGES_PER_CLASS])
-
-    np.random.seed(42)
-    np.random.shuffle(subset_indices)
-
-    train_size = int(0.8 * len(subset_indices))
-    val_indices = subset_indices[train_size:]
-
-    print(f"Validation samples: {len(val_indices)}")
-
-    # ── Load model ───────────────────────────────────────────────────
-    model = CNNLSTM(num_classes=43).to(device)
-    model.load_state_dict(torch.load('cnn_lstm.pth', map_location=device))
-    model.eval()
-    print("Model loaded: cnn_lstm.pth")
-
-    # ── Evaluate at each corruption level ────────────────────────────
-    corruption_levels = [0.0, 0.3, 0.5]
-    results = {}
-
-    for level in corruption_levels:
-        print(f"\n{'─' * 40}")
-        print(f"Evaluating at {int(level * 100)}% corruption...")
-        print(f"{'─' * 40}")
-
-        ds = SequenceDataset(full_ds, val_indices, attack=(level > 0), corruption_fraction=level)
-        loader = DataLoader(ds, batch_size=16, shuffle=False, num_workers=2)
-
-        res = evaluate_model(model, loader, device)
-        results[level] = res
-
-        print(f"  Accuracy:          {res['accuracy']:.2f}%")
-        print(f"  Avg Loss:          {res['avg_loss']:.4f}")
-        print(f"  ECE:               {res['ece']:.4f}")
-        print(f"  Risk-Weighted Err: {res['risk_weighted_error']:.4f}")
-        print(f"  Action Safety:     {res['action_safety_rate']:.2f}%")
-
-    # ── Generate Visualizations ──────────────────────────────────────
-    print(f"\n{'═' * 60}")
-    print("Generating visualizations...")
-    print(f"{'═' * 60}")
-
-    # Attention heatmaps
-    print("\n[1/6] Attention heatmaps...")
-    val_ds_for_attn = SequenceDataset(full_ds, val_indices, attack=False, corruption_fraction=0.0)
-    plot_attention_heatmaps(model, val_ds_for_attn, device, num_samples=3)
-
-    # Robustness curves
-    print("[2/6] Robustness curves...")
-    plot_robustness_curves(results)
-
-    # Confidence distributions
-    print("[3/6] Confidence distributions...")
-    plot_confidence_distributions(results)
-
-    # Calibration diagrams
-    print("[4/6] Calibration diagrams...")
-    plot_calibration_diagrams(results)
-
-    # Confusion heatmaps
-    print("[5/6] Confusion heatmaps...")
-    plot_confusion_heatmaps(results)
-
-    # Per-class robustness
-    print("[6/6] Per-class robustness...")
-    plot_per_class_robustness(results)
-
-    # ── Generate Report ──────────────────────────────────────────────
-    print(f"\n{'═' * 60}")
-    print("Generating report & slide script...")
-    print(f"{'═' * 60}")
-
-    generate_markdown_report(results)
-    generate_pptx_script(results)
-
-    print(f"\n{'═' * 60}")
-    print("ALL DONE!")
-    print(f"{'═' * 60}")
-    print(f"\nOutputs in eval_outputs/:")
-    print(f"  figures/  - All visualization PNGs")
-    print(f"  report/   - evaluation_report.md")
-    print(f"  generate_slides.js - Run with: node generate_slides.js")
-    print(f"\nTo generate PPTX slides:")
-    print(f"  npm install -g pptxgenjs")
-    print(f"  node eval_outputs/generate_slides.js")
