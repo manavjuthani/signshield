@@ -1,4 +1,4 @@
-# Project Name
+# Sign Shield
 SignShield consists of two main image classification models: A base CNN and a CNN-LSTM used to classify attacked and clean sequential images of road signs. Both models were trained on the GTSRB dataset, and the CNN-LSTM was trained using the weights of the CNN. 
 
 ## Features
