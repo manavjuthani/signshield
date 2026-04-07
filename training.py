@@ -39,7 +39,6 @@ full_ds = datasets.GTSRB(root='./data', split='train', download=True, transform=
 print("Step 2: dataset loaded")
 
 
-# Collect targets by iterating through the dataset as full_ds.targets is not directly available
 all_targets = []
 for _, target in full_ds:
     all_targets.append(target)
@@ -49,10 +48,7 @@ print("Step 3: targets collected")
 
 
 print(f"Full: {len(full_ds)} images, Classes: {len(np.unique(all_targets))}")
-# The GTSRB dataset does not have a 'classes' attribute directly.
-# If you need class names, you would typically load them from an external file
-# or map the integer targets to descriptive names.
-# print("Sample classes:", full_ds.classes[:5])
+
 
 
 NUM_CLASSES = 43
@@ -60,7 +56,7 @@ IMAGES_PER_CLASS = 232  # 120 per class = ~5000 total
 
 
 subset_indices = []
-all_targets_array = np.array(all_targets)  # reuse already-collected targets
+all_targets_array = np.array(all_targets)  
 
 
 for cls in range(NUM_CLASSES):
@@ -108,7 +104,7 @@ print(f"Using: {device}")
 model = models.resnet18(weights=None)
 
 
-# Add dropout before final layer to prevent overfitting
+
 model.fc = nn.Sequential(
     nn.Dropout(0.3),           # Randomly turns off 30% of neurons
     nn.Linear(model.fc.in_features, 43)
@@ -128,7 +124,7 @@ print("Model ready!")
 best_val_acc = 0
 
 
-for epoch in range(15):  # More epochs now
+for epoch in range(15):  
     # Training
     model.train()
     total_loss = 0
@@ -142,7 +138,6 @@ for epoch in range(15):  # More epochs now
         total_loss += loss.item()
 
 
-    # Check val accuracy each epoch
     model.eval()
     correct = 0
     total = 0
@@ -184,7 +179,7 @@ torch.save(model.state_dict(), 'resnet18_baseline_1000.pth')
 print("Model saved!")
 
 
-# Load dataset WITHOUT normalization - just for frame generation
+
 raw_transform = transforms.Compose([
     transforms.Resize((224, 224)),
     transforms.ToTensor()  # No normalization here
