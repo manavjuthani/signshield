@@ -10,6 +10,10 @@ SignShield consists of two main image classification models: A base CNN and a CN
 pip install -r requirements.txt
 ```
 
+## Dataset
+The dataset will automatically download on the first run of code. 
+
+
 ## Usage
 To run the CNN:
 ```bash
@@ -19,3 +23,5 @@ To run the CNN-LSTM:
 ```bash
 python3 cnnlstm.py
 ```
+
+Beware training both models can take upwards of 40 minutes each depending on compute power of your machine. 
