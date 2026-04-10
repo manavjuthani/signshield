@@ -15,7 +15,7 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 import matplotlib
-matplotlib.use('Agg')  # Non-GUI backend — must be before pyplot import
+matplotlib.use('Agg')  # Non-GUI backend, so it must be before pyplot import
 import matplotlib.pyplot as plt
 import cv2
 from PIL import Image
